@@ -1,0 +1,98 @@
+# LAB MODEL of angular/angular .github/workflows/benchmark-compare.yml
+# Faithful to the structure that creates the TOCTOU, but self-contained:
+#   - no real secrets: BENCH_RESULTS_TOKEN / BENCH_MEMBERSHIP_TOKEN are fictional repo
+#     secrets you set to the literal string LAB_CANARY_<something> (never a real PAT).
+#   - the "team membership" gate is modeled by checking the commenter against a repo
+#     variable TEAM_MEMBERS (comma list) instead of a real org team + org token.
+#   - the attacker code path only reads the fictional token from a LATER step's env and
+#     writes sha256(token) to the job summary. It performs NO network callback.
+#
+# The vulnerable property reproduced 1:1:
+#   (a) issue_comment trigger => runs on the DEFAULT branch, no fork-approval gate;
+#   (b) the PR head SHA is resolved LIVE at run time (pull-request-comment-branch step),
+#       NOT pinned to the SHA the member saw => race window;
+#   (c) checkout of head_owner/head_repo@head_sha followed by running the fork's code
+#       (install + benchmarks) in a context that holds secrets.
+name: Run benchmark comparison (LAB)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: read-all
+
+jobs:
+  benchmark-compare:
+    runs-on: ubuntu-latest
+    # Model of the angular/team membership gate (step 1 in the original).
+    if: ${{ github.event.issue.pull_request && startsWith(github.event.comment.body, '/benchmark-compare ') }}
+    steps:
+      # ---- Gate: commenter must be a "team member" (repo variable, lab stand-in) ----
+      - name: Team membership gate (lab stand-in for actions-team-membership)
+        env:
+          COMMENTER: ${{ github.event.comment.user.login }}
+          TEAM_MEMBERS: ${{ vars.TEAM_MEMBERS }}
+        run: |
+          echo "Commenter: $COMMENTER"
+          case ",$TEAM_MEMBERS," in
+            *",$COMMENTER,"*) echo "team member OK" ;;
+            *) echo "::error::not a team member"; exit 1 ;;
+          esac
+
+      # ---- TOCTOU core: resolve the PR head ref/sha LIVE, like the real action ----
+      # The real workflow uses alessbell/pull-request-comment-branch@ef3408c, which
+      # resolves headRef.target.oid via a GraphQL query AT RUN TIME. We reproduce that
+      # exact behaviour with a gh api call so the lab needs no third-party action.
+      - name: Resolve PR head (live) — models pull-request-comment-branch
+        id: comment-branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          data=$(gh api graphql -f query='
+            query($owner:String!,$name:String!,$number:Int!){
+              repository(owner:$owner,name:$name){
+                pullRequest(number:$number){
+                  headRef{ name target{ oid } }
+                  headRepository{ name owner{ login } }
+                }
+              }
+            }' -F owner="${REPO%/*}" -F name="${REPO#*/}" -F number="$PR_NUMBER")
+          echo "head_sha=$(echo "$data"   | jq -r '.data.repository.pullRequest.headRef.target.oid')"        >> "$GITHUB_OUTPUT"
+          echo "head_ref=$(echo "$data"   | jq -r '.data.repository.pullRequest.headRef.name')"              >> "$GITHUB_OUTPUT"
+          echo "head_owner=$(echo "$data" | jq -r '.data.repository.pullRequest.headRepository.owner.login')">> "$GITHUB_OUTPUT"
+          echo "head_repo=$(echo "$data"  | jq -r '.data.repository.pullRequest.headRepository.name')"       >> "$GITHUB_OUTPUT"
+
+      # Small artificial delay = the ~13 s the real job spends between SHA resolution
+      # and running fork code (team-membership + reaction + checkout + node setup).
+      # It only makes the race easy to hit deterministically in the lab; remove it and
+      # the race still exists, just narrower.
+      - name: Setup delay (models node/bazel setup latency)
+        run: sleep 13
+
+      - name: Checkout PR branch (fork, live sha)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.comment-branch.outputs.head_owner }}/${{ steps.comment-branch.outputs.head_repo }}
+          ref: ${{ steps.comment-branch.outputs.head_sha }}
+          persist-credentials: false
+
+      # Running the fork's code. In the real workflow this is `pnpm install` +
+      # `pnpm benchmarks ...`. Here it is the repo's own benchmarks/run.sh, which the
+      # attacker overwrites on the raced commit.
+      - name: Run benchmark (executes fork code)
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          chmod +x ./benchmarks/run.sh || true
+          ./benchmarks/run.sh "$COMMENT_BODY"
+
+      # A LATER step that holds the fictional results token — this is the secret the
+      # attacker code (running in the previous step) targets via /proc or worker memory.
+      - name: Post results (holds fictional token)
+        env:
+          BENCH_RESULTS_TOKEN: ${{ secrets.BENCH_RESULTS_TOKEN }}
+          BENCH_MEMBERSHIP_TOKEN: ${{ secrets.BENCH_MEMBERSHIP_TOKEN }}
+        run: |
+          echo "would post benchmark results using BENCH_RESULTS_TOKEN"

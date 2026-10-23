@@ -1,0 +1,44 @@
+# LAB stage 2b — cache "consumer", models angular/angular ci.yml job `publish-snapshots`.
+# Runs on push to main (default branch), holds a fictional SNAPSHOT_BUILDS_TOKEN, and
+# restores the bazel cache via a restore-keys PREFIX (as dev-infra bazel/setup does).
+# If the attacker poisoned an entry under that prefix, the poisoned "bazelisk" runs here
+# — i.e. attacker code executes in the job that holds the publish token.
+#
+# Lab proof = the poisoned binary writes LAB-POISON-PROOF.txt. No secret is read/dumped.
+name: publish-snapshots (LAB)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  publish-snapshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Models bazel/setup's restore: exact key will miss, so the PREFIX restore-key
+      # is used — and that is what serves the attacker's poisoned entry.
+      - name: Restore bazel cache (prefix restore-key, like dev-infra bazel/setup)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/bazelisk
+          key: bazel-cache-Linux-${{ hashFiles('**/WORKSPACE') }}-nope
+          restore-keys: |
+            bazel-cache-Linux-
+
+      - name: Run bazelisk (restored) — holds fictional publish token
+        env:
+          SNAPSHOT_BUILDS_TOKEN: ${{ secrets.SNAPSHOT_BUILDS_TOKEN }}
+        run: |
+          if [ -x ~/.cache/bazelisk/bazelisk ]; then
+            ~/.cache/bazelisk/bazelisk build //... || true
+          else
+            echo "no restored bazelisk (cache miss) — run cache-producer first"
+          fi

