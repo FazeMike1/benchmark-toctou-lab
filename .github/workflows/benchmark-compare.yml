@@ -58,20 +58,14 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
         run: |
-          data=$(gh api graphql -f query='
-            query($owner:String!,$name:String!,$number:Int!){
-              repository(owner:$owner,name:$name){
-                pullRequest(number:$number){
-                  headRef{ name target{ oid } }
-                  headRepository{ name owner{ login } }
-                }
-              }
-            }' -F owner="${REPO%/*}" -F name="${REPO#*/}" -F number="$PR_NUMBER")
-          echo "head_sha=$(echo "$data"   | jq -r '.data.repository.pullRequest.headRef.target.oid')"        >> "$GITHUB_OUTPUT"
-          echo "head_ref=$(echo "$data"   | jq -r '.data.repository.pullRequest.headRef.name')"              >> "$GITHUB_OUTPUT"
-          echo "head_owner=$(echo "$data" | jq -r '.data.repository.pullRequest.headRepository.owner.login')">> "$GITHUB_OUTPUT"
-          echo "head_repo=$(echo "$data"  | jq -r '.data.repository.pullRequest.headRepository.name')"       >> "$GITHUB_OUTPUT"
-          echo "resolved head_sha=$(echo "$data" | jq -r '.data.repository.pullRequest.headRef.target.oid')"
+          # REST pulls.get mirrors what pull-request-comment-branch reads: the PR's
+          # CURRENT head (sha/ref/repo), resolved live — not pinned to the reviewed sha.
+          data=$(gh api "repos/$REPO/pulls/$PR_NUMBER")
+          echo "head_sha=$(echo "$data"   | jq -r '.head.sha')"            >> "$GITHUB_OUTPUT"
+          echo "head_ref=$(echo "$data"   | jq -r '.head.ref')"            >> "$GITHUB_OUTPUT"
+          echo "head_owner=$(echo "$data" | jq -r '.head.repo.owner.login')">> "$GITHUB_OUTPUT"
+          echo "head_repo=$(echo "$data"  | jq -r '.head.repo.name')"      >> "$GITHUB_OUTPUT"
+          echo "resolved head_sha=$(echo "$data" | jq -r '.head.sha')"
 
       - name: Checkout PR branch (fork, live sha)
         uses: actions/checkout@v4
