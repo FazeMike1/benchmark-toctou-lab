@@ -39,6 +39,14 @@ jobs:
             *) echo "::error::not a team member"; exit 1 ;;
           esac
 
+      # Window = job startup + gate/reaction latency the real job spends BEFORE it
+      # resolves the head SHA (measured ~13 s on run 29689973609: comment 14:00:29Z ->
+      # SHA resolved 14:00:42Z). The attacker force-pushes during THIS window, so the
+      # live resolution below picks up the malicious commit instead of the reviewed one.
+      # Remove it and the race still exists against natural startup latency, just narrower.
+      - name: Startup/gate latency (models pre-resolution window)
+        run: sleep 13
+
       # ---- TOCTOU core: resolve the PR head ref/sha LIVE, like the real action ----
       # The real workflow uses alessbell/pull-request-comment-branch@ef3408c, which
       # resolves headRef.target.oid via a GraphQL query AT RUN TIME. We reproduce that
@@ -63,13 +71,7 @@ jobs:
           echo "head_ref=$(echo "$data"   | jq -r '.data.repository.pullRequest.headRef.name')"              >> "$GITHUB_OUTPUT"
           echo "head_owner=$(echo "$data" | jq -r '.data.repository.pullRequest.headRepository.owner.login')">> "$GITHUB_OUTPUT"
           echo "head_repo=$(echo "$data"  | jq -r '.data.repository.pullRequest.headRepository.name')"       >> "$GITHUB_OUTPUT"
-
-      # Small artificial delay = the ~13 s the real job spends between SHA resolution
-      # and running fork code (team-membership + reaction + checkout + node setup).
-      # It only makes the race easy to hit deterministically in the lab; remove it and
-      # the race still exists, just narrower.
-      - name: Setup delay (models node/bazel setup latency)
-        run: sleep 13
+          echo "resolved head_sha=$(echo "$data" | jq -r '.data.repository.pullRequest.headRef.target.oid')"
 
       - name: Checkout PR branch (fork, live sha)
         uses: actions/checkout@v4
