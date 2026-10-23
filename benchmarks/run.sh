@@ -4,3 +4,5 @@
 set -euo pipefail
 echo "[benchmarks] running comparison for: ${1:-<none>}"
 echo "[benchmarks] (benign) no results"
+
+# benign tweak for benchmark comparison
