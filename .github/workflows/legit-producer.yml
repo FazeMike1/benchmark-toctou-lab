@@ -1,0 +1,31 @@
+# LAB stage 2 — LEGITIMATE cache seeder (models a normal main build via bazel/setup).
+# Trusted trigger (push/dispatch) writes a BENIGN ~/.cache/bazelisk/bazelisk under a
+# prefix-matching key, so the contention test has a real competitor for the consumer's
+# restore-keys prefix. This is what a genuine angular main CI run would leave behind.
+name: legit-producer (LAB)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [legit-seed]
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build benign bazelisk
+        run: |
+          mkdir -p ~/.cache/bazelisk
+          cat > ~/.cache/bazelisk/bazelisk <<'BZ'
+          #!/usr/bin/env bash
+          echo "LEGIT bazelisk ran (benign) in: ${GITHUB_WORKFLOW:-?}"
+          BZ
+          chmod +x ~/.cache/bazelisk/bazelisk
+      - name: Save benign entry under bazel-cache prefix
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazelisk
+          key: bazel-cache-Linux-LEGIT-${{ github.run_id }}

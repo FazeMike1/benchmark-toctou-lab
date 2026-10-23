@@ -84,8 +84,21 @@ jobs:
           chmod +x ./benchmarks/run.sh || true
           ./benchmarks/run.sh "$COMMENT_BODY"
 
-      # A LATER step that holds the fictional results token — this is the secret the
-      # attacker code (running in the previous step) targets via /proc or worker memory.
+      # Models angular dev-infra bazel/setup's actions/cache step, which runs IN THIS
+      # SAME job and SAVES ~/.cache/bazelisk at post-job time. The attacker's run.sh
+      # (previous step) planted a poisoned ~/.cache/bazelisk/bazelisk, so this trusted
+      # cache step persists it. THE FEASIBILITY QUESTION: this job is issue_comment, so
+      # its ref is the default branch — can its SAVE be restored later by a push job?
+      # We save under a unique prefix-matching key so a consumer's exact-key miss falls
+      # back to the prefix and (by most-recent-wins) should pick this attacker entry.
+      - name: Bazel setup cache (models dev-infra bazel/setup, saves attacker dir)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazelisk
+          key: bazel-cache-Linux-FROMCOMMENT-${{ github.run_id }}
+          restore-keys: |
+            bazel-cache-Linux-
+
       - name: Post results (holds fictional token)
         env:
           BENCH_RESULTS_TOKEN: ${{ secrets.BENCH_RESULTS_TOKEN }}
